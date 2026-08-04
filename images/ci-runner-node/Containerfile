@@ -1,0 +1,106 @@
+# syntax=docker/dockerfile:1
+#
+# Node toolchain for every repo that runs a pnpm-based gate: spond-js, respawn-control,
+# the VTK site, and the ansible repo's prettier job.
+#
+# WHY THIS SEEDS THE TOOL CACHE RATHER THAN JUST INSTALLING NODE
+#
+# Every one of those repos gets its Node from `actions/setup-node`, not from PATH.
+# setup-node resolves a requested version against the runner tool cache
+# (RUNNER_TOOL_CACHE, /opt/hostedtoolcache) and downloads only on a miss — so a Node
+# binary merely on PATH is invisible to it and saves nothing. Seeding the cache in the
+# documented layout is what turns "Node is in the image" into "setup-node is a no-op".
+#
+# The layout setup-node expects, per @actions/tool-cache:
+#   /opt/hostedtoolcache/node/<full-version>/x64        <- the extracted tree
+#   /opt/hostedtoolcache/node/<full-version>/x64.complete <- marker, or the dir is ignored
+#
+# Versions are the three the consumers actually request, read from their workflows:
+#   20 -> ansible's Prettier job         22 -> spond-js and respawn-control
+#   26 -> the VTK site (engines: >=26)
+# Adding a version here means a consumer asked for it. Don't add speculatively; each one
+# is ~100 MB.
+FROM ghcr.io/runnane/ci-runner-base@sha256:abdd829b97ccddf5fd24f1b7c2b404247c8fc6644e818797b2268123aa78c3c5
+
+ARG NODE_20=20.20.2
+ARG NODE_22=22.23.2
+ARG NODE_26=26.6.0
+# Default on PATH. spond-js needs >=22.12 and VTK needs >=26, so 26 satisfies both and
+# keeps one default rather than a per-repo variant.
+ARG NODE_DEFAULT=26.6.0
+# spond-js pins 10.34.5 and VTK pins 10.33.3; both are >=10 <11. Pre-activating one 10.x
+# makes the common case offline — corepack still honours each repo's `packageManager`
+# field, including ansible's pnpm 9, fetching that version if it differs.
+ARG PNPM_VERSION=10.34.5
+
+ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
+ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
+
+USER root
+
+# Node 26 links against libatomic, which the runner base does not ship — its binary dies
+# with "error while loading shared libraries: libatomic.so.1". Node 20 and 22 do not need
+# it. Caught by building this image before publishing it; without this the VTK site's
+# Node would be unusable while 20 and 22 looked fine.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends libatomic1; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    mkdir -p "$RUNNER_TOOL_CACHE/node"; \
+    for version in "$NODE_20" "$NODE_22" "$NODE_26"; do \
+      dest="$RUNNER_TOOL_CACHE/node/${version}/x64"; \
+      mkdir -p "$dest"; \
+      # .tar.gz, not .tar.xz: the base image has no `xz`, and tar handles gzip natively.
+      # A slightly larger download beats adding a package to a public base layer.
+      curl --fail --silent --show-error --location \
+        "https://nodejs.org/dist/v${version}/node-v${version}-linux-x64.tar.gz" \
+        | tar --extract --gzip --strip-components=1 --directory="$dest"; \
+      # Without this marker the tool-cache library ignores the directory entirely and
+      # setup-node downloads anyway — the whole point of this layer would be lost.
+      touch "$RUNNER_TOOL_CACHE/node/${version}/x64.complete"; \
+      "$dest/bin/node" --version; \
+    done; \
+    chown -R runner:runner "$RUNNER_TOOL_CACHE/node"
+
+# Default Node on PATH, for `run:` steps that use node without a setup action.
+#
+# PATH rather than per-binary symlinks: npm's global prefix is the node tree itself, so
+# anything installed with `npm -g` (pnpm, below) lands in that same bin dir. Symlinking
+# node/npm/npx individually left `pnpm` installed but unreachable — PATH covers whatever
+# gets added later without a second edit.
+ENV PATH="/opt/hostedtoolcache/node/26.6.0/x64/bin:${PATH}"
+
+# Kept as well, because some tooling invokes an absolute /usr/local/bin/node.
+RUN set -eux; \
+    for binary in node npm npx; do \
+      ln -sf "$RUNNER_TOOL_CACHE/node/${NODE_DEFAULT}/x64/bin/${binary}" "/usr/local/bin/${binary}"; \
+    done; \
+    node --version; \
+    npm --version
+
+# pnpm via npm, NOT corepack. Node 26 no longer ships corepack (20 and 22 still do —
+# verified by listing bin/ in all three trees), and VTK requires Node >= 26, so a
+# corepack-based install would break on exactly the consumer that needs the newest Node.
+# Repos using `pnpm/action-setup` still get their own pinned version; this is the
+# fallback for a plain `run: pnpm …` step and makes the common case need no network.
+RUN set -eux; \
+    npm install --global "pnpm@${PNPM_VERSION}"; \
+    pnpm --version
+
+USER runner
+
+# Fail the build here rather than in a consumer's CI. Each assertion maps to something a
+# consumer depends on: the three cache entries plus their markers, a working default
+# node/npm/pnpm, and gh surviving from the base layer.
+RUN set -eux; \
+    for version in "$NODE_20" "$NODE_22" "$NODE_26"; do \
+      test -x "$RUNNER_TOOL_CACHE/node/${version}/x64/bin/node"; \
+      test -f "$RUNNER_TOOL_CACHE/node/${version}/x64.complete"; \
+    done; \
+    node --version; \
+    npm --version; \
+    pnpm --version; \
+    gh --version; \
+    git --version

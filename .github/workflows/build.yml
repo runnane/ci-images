@@ -33,6 +33,7 @@ jobs:
       matrix:
         image:
           - ci-runner-base
+          - ci-runner-node
     permissions:
       contents: read
       packages: write # push to GHCR
