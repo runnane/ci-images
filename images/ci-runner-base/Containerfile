@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+#
+# Base layer for every runner image in this repo.
+#
+# Pinned by DIGEST, not tag, and deliberately so: these containers execute untrusted
+# third-party code (a Dependabot version bump's `postinstall` runs here) on hardware
+# inside our own network, so what runs must not change without a reviewed commit.
+# Digest below is ghcr.io/actions/actions-runner:latest as of 2026-08-04
+# (Ubuntu 24.04.4 LTS, linux/amd64). Dependabot moves it; nothing else should.
+FROM ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+
+# What the official image already ships, verified by probing it on 2026-08-04:
+#   git, python3, jq, curl, unzip, tar, sudo — plus config.sh/run.sh and --ephemeral
+# What it does NOT ship:
+#   node, npm, gh
+#
+# `gh` goes in this shared base rather than in one consumer, because more than one
+# workflow shells out to it directly — respawn-control's dependabot-auto-merge.yml
+# calls `gh pr merge --auto` and assumes it is on PATH because ubuntu-latest
+# preinstalls it. That workflow is the first thing that breaks without this layer.
+#
+# node/npm deliberately stay OUT of the base: the consumers disagree on version
+# (spond-js needs >= 22.12, the VTK site needs >= 26), so they belong in the
+# per-image layers on top of this.
+ARG GH_VERSION=2.97.0
+
+USER root
+
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    curl --fail --silent --show-error --location \
+      --output /tmp/gh.deb \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.deb"; \
+    dpkg --install /tmp/gh.deb; \
+    rm --force /tmp/gh.deb; \
+    gh --version
+
+# Back to the unprivileged account the runner actually executes as (uid 1001).
+# Jobs must never run as root: the whole isolation argument for ephemeral containers
+# assumes a compromised job is not already privileged inside its own container.
+USER runner
+
+# Fail loudly at build time if a future edit breaks something a consumer relies on,
+# rather than at 3am in someone's CI run.
+RUN set -eux; \
+    for tool in gh git python3 jq curl tar unzip; do \
+      command -v "$tool" >/dev/null || { echo "MISSING: $tool" >&2; exit 1; }; \
+    done; \
+    test -x ./config.sh; \
+    test -x ./run.sh; \
+    ./config.sh --help 2>/dev/null | grep -q -- --ephemeral \
+      || { echo "base image lost --ephemeral support" >&2; exit 1; }
