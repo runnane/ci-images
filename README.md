@@ -8,8 +8,23 @@ Published to public GHCR:
 | Image | Contents | Issue |
 | --- | --- | --- |
 | `ghcr.io/runnane/ci-runner-base` | official runner + `gh` | CIIMG-1 |
-| `ghcr.io/runnane/ci-runner-node` *(not built yet)* | base + Node + pnpm | CIIMG-2 |
-| `ghcr.io/runnane/ci-runner-ansible` *(not built yet)* | base + ansible-lint, gitleaks, uv/pytest, prettier | CIIMG-3 |
+| `ghcr.io/runnane/ci-runner-node` | base + Node 20/22/26 in the tool cache + pnpm | CIIMG-2 |
+
+**`ci-runner-node` is the one the runners should use** — it inherits the base, and it
+serves all four private repos. There is deliberately **no separate ansible image**
+(CIIMG-3, cancelled): the ansible repo needs only Node 20 baked, for its Prettier job,
+and everything else in its CI comes from pinned actions — `./.github/actions/uv-env`
+(uv 0.11.8, Python 3.14 from `.python-version`), which exists precisely so CI and the
+control node run byte-identical versions. Baking `ansible-lint` or `uv` here would
+duplicate or fight that. `gitleaks/gitleaks-action@v2` is a JS action (`using: node24`),
+not a Docker one, so it needs no daemon inside the runner.
+
+Current digests to pin:
+
+```
+ghcr.io/runnane/ci-runner-base@sha256:abdd829b97ccddf5fd24f1b7c2b404247c8fc6644e818797b2268123aa78c3c5
+ghcr.io/runnane/ci-runner-node@sha256:2ff3f2bebc4ccae29f7e51ee49d42b9e75b34a309a0d22fdb7a358d14ab8ce9b
+```
 
 ## Why this repo is public, and must stay that way
 
@@ -67,6 +82,59 @@ not listed here.
 `node`/`npm` are deliberately **not** in the base: consumers disagree on version
 (spond-js needs ≥ 22.12, the VTK site ≥ 26), so they belong in the per-image layers.
 
+Also absent and worth knowing: **`xz`**. That is why `ci-runner-node` fetches Node as
+`.tar.gz` rather than the smaller `.tar.xz` — a slightly larger download beats adding a
+package to a layer every image inherits.
+
+## `ci-runner-node`: the tool cache is the whole point
+
+**Read this before editing that Containerfile.** The value of the image is not that Node
+is installed — it is *where* it is installed.
+
+Every consumer gets Node from `actions/setup-node`, which resolves a requested version
+against the runner tool cache (`RUNNER_TOOL_CACHE` = `/opt/hostedtoolcache`) and downloads
+only on a miss. **A Node binary merely on `PATH` is invisible to it.** So the image seeds
+the cache in the exact layout `@actions/tool-cache` expects:
+
+```
+/opt/hostedtoolcache/node/<full-version>/x64            the extracted tree
+/opt/hostedtoolcache/node/<full-version>/x64.complete   marker — REQUIRED
+```
+
+**Without the `.complete` marker the directory is ignored entirely** and `setup-node`
+downloads anyway, silently undoing the whole point while everything still passes. If you
+add or move a version, add its marker, and keep the assertion block at the end of the
+Containerfile that checks for both.
+
+### Which versions, and why exactly these
+
+| Version | Requested by |
+| --- | --- |
+| **20.20.2** | the ansible repo's Prettier job (`node-version: "20"`, pnpm 9) |
+| **22.23.2** | spond-js and respawn-control (`node-version: 22`) |
+| **26.6.0** | the VTK site (`engines.node: ">=26"`) — also the default on `PATH` |
+
+Each entry is ~100 MB. **An entry exists because a consumer pins that version** — read
+their workflows before adding one, and don't add speculatively. 26 is the `PATH` default
+because it satisfies both spond-js (≥ 22.12) and VTK (≥ 26), so one default beats
+per-major image variants.
+
+pnpm 10.34.5 is installed globally (spond-js's pin). Repos pinning something else — VTK's
+10.33.3, ansible's 9 — still resolve their own via `packageManager` or
+`pnpm/action-setup`; the baked copy just makes the common case need no network.
+
+### Two traps found while building it
+
+- **Node 26 needs `libatomic.so.1`**, which the runner base does not ship; its binary dies
+  with a loader error. Node 20 and 22 are unaffected — so this breaks *only* the newest
+  consumer, and looks fine until VTK's first run. Hence the `libatomic1` layer.
+- **Node 26 no longer ships `corepack`** (20 and 22 still do). pnpm therefore comes from
+  `npm install -g`, not `corepack prepare` — a corepack-based install would break on
+  exactly the consumer that needs the newest Node.
+- Related: **npm's global prefix is the node tree itself**, so per-binary symlinks left
+  `pnpm` installed but unreachable. The default Node's `bin` is on `PATH` instead, which
+  also covers anything installed globally later.
+
 ## Adding an image
 
 1. `images/<name>/Containerfile`, starting `FROM ghcr.io/runnane/ci-runner-base@sha256:…`
@@ -76,6 +144,15 @@ not listed here.
    should fail here, not in a consumer's CI at an inconvenient hour
 5. Open a PR: it builds without pushing, so the Containerfile is verified before anything
    is published
+6. **Build it locally first.** Every problem in `ci-runner-node` — the missing `xz`, Node
+   26's `libatomic`, corepack's absence, npm's global prefix — surfaced in a local
+   `docker build`, in seconds, before a single CI cycle or a published bad layer. The PR
+   build is the second opinion, not the first.
+7. **Run a real consumer's gates inside the image** before switching any repo to
+   `runs-on: self-hosted`. For `ci-runner-node` that was spond-js's full `pnpm gates`
+   (biome, typecheck, build, vitest + coverage) — green, on Node 26.6.0 / pnpm 10.34.5.
+   Note the container runs as uid 1001, so a bind-mounted checkout needs matching
+   ownership or `pnpm install` silently writes nothing.
 
 ## Conventions
 
