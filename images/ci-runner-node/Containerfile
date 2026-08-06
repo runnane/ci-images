@@ -62,7 +62,13 @@ RUN set -eux; \
       touch "$RUNNER_TOOL_CACHE/node/${version}/x64.complete"; \
       "$dest/bin/node" --version; \
     done; \
-    chown -R runner:runner "$RUNNER_TOOL_CACHE/node"
+    # Chown the tool-cache ROOT, not just node/. Every setup-* action creates its
+    # own subdirectory here — setup-uv wants /opt/hostedtoolcache/uv, setup-python
+    # wants .../Python — and jobs run as uid 1001, so a root-owned root means the
+    # action dies with `EACCES: permission denied, mkdir '/opt/hostedtoolcache/uv'`.
+    # Chowning only node/ made this image work for Node repos and fail for every
+    # other toolchain, which is exactly how it shipped and reached ansible's CI.
+    chown -R runner:runner "$RUNNER_TOOL_CACHE"
 
 # Default Node on PATH, for `run:` steps that use node without a setup action.
 #
@@ -103,4 +109,10 @@ RUN set -eux; \
     npm --version; \
     pnpm --version; \
     gh --version; \
-    git --version
+    git --version; \
+    # The tool-cache root must be writable by this user, or any setup-* action for a
+    # toolchain we did NOT pre-seed dies with EACCES creating its own subdirectory.
+    # Asserted because the failure surfaces far away — in a consumer's CI, naming a
+    # tool this image has never heard of.
+    mkdir -p "$RUNNER_TOOL_CACHE/.write-probe"; \
+    rmdir "$RUNNER_TOOL_CACHE/.write-probe"
