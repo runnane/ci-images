@@ -23,7 +23,7 @@ Current digests to pin:
 
 ```
 ghcr.io/runnane/ci-runner-base@sha256:abdd829b97ccddf5fd24f1b7c2b404247c8fc6644e818797b2268123aa78c3c5
-ghcr.io/runnane/ci-runner-node@sha256:2ff3f2bebc4ccae29f7e51ee49d42b9e75b34a309a0d22fdb7a358d14ab8ce9b
+ghcr.io/runnane/ci-runner-node@sha256:bf5a1ac62bdb68dd1fe5ad3aab8cc0887288ad25595a01cbc9448d8b311fd0fd
 ```
 
 ## Why this repo is public, and must stay that way
@@ -58,6 +58,14 @@ hardware on our own network — so what executes must only change via a reviewed
 a deliberate digest bump in the [ANS runner role](https://github.com/runnane/ansible).
 
 Every pushed build prints the digest to pin in its workflow run summary.
+
+**Read the digest from the run summary, or from the version tagged `main`.** Do **not**
+take "the newest version" out of the GHCR API: attestation manifests are listed alongside
+real images and their tag is `sha256-<subject-digest>`, so a naive pick lands on one about
+half the time. That happened during CIIMG-6 — the runner role was pinned to an attestation
+tag, pulled a digest resolving to the pre-fix layer, and the bug it was meant to fix
+reproduced *after a converge that reported `changed`*. Ignore anything whose only tag
+matches `sha256-*`, and verify by pulling the candidate before you pin it.
 
 Images are anonymously pullable; no registry credential is needed on the runner host.
 
