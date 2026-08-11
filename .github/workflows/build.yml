@@ -83,7 +83,7 @@ jobs:
       # goes wrong we need to know exactly which build produced the running image.
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
