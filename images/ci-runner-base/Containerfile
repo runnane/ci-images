@@ -7,7 +7,7 @@
 # inside our own network, so what runs must not change without a reviewed commit.
 # Digest below is ghcr.io/actions/actions-runner:latest as of 2026-08-04
 # (Ubuntu 24.04.4 LTS, linux/amd64). Dependabot moves it; nothing else should.
-FROM ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
 
 # What the official image already ships, verified by probing it on 2026-08-04:
 #   git, python3, jq, curl, unzip, tar, sudo — plus config.sh/run.sh and --ephemeral
