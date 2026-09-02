@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Push only when the commit is already on main (or a tag, or a manual/scheduled
       # run). A pull_request build verifies the Containerfile without publishing, and a
