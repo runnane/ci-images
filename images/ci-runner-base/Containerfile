@@ -9,6 +9,12 @@
 # (Ubuntu 24.04.4 LTS, linux/amd64). Dependabot moves it; nothing else should.
 FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
 
+# bash with pipefail for every RUN below: /bin/sh here is dash, which has no
+# pipefail, so a failing left-hand side of a pipe would otherwise be masked by
+# whatever the right-hand side returns. Build-time only — it does not change
+# the shell jobs run in.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # What the official image already ships, verified by probing it on 2026-08-04:
 #   git, python3, jq, curl, unzip, tar, sudo — plus config.sh/run.sh and --ephemeral
 # What it does NOT ship:
