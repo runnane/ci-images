@@ -9,9 +9,12 @@ Published to public GHCR:
 | --- | --- | --- |
 | `ghcr.io/runnane/ci-runner-base` | official runner + `gh` | CIIMG-1 |
 | `ghcr.io/runnane/ci-runner-node` | base + Node 20/22/26 in the tool cache + pnpm | CIIMG-2 |
+| `ghcr.io/runnane/ci-runner-muxwall` | node + C++ toolchain, tmux 3.7b (from source), Playwright Chromium's OS libraries | CIIMG-8 |
 
 **`ci-runner-node` is the one the runners should use** — it inherits the base, and it
-serves all four private repos. There is deliberately **no separate ansible image**
+serves all four private repos. The one exception is muxwall's slots, which need
+`ci-runner-muxwall` (see [its section](#ci-runner-muxwall-node-plus-what-muxwalls-gates-need)).
+There is deliberately **no separate ansible image**
 (CIIMG-3, cancelled): the ansible repo needs only Node 20 baked, for its Prettier job,
 and everything else in its CI comes from pinned actions — `./.github/actions/uv-env`
 (uv 0.11.8, Python 3.14 from `.python-version`), which exists precisely so CI and the
@@ -152,6 +155,82 @@ pnpm 10.34.5 is installed globally (spond-js's pin). Repos pinning something els
 - Related: **npm's global prefix is the node tree itself**, so per-binary symlinks left
   `pnpm` installed but unreachable. The default Node's `bin` is on `PATH` instead, which
   also covers anything installed globally later.
+
+## `ci-runner-muxwall`: node plus what muxwall's gates need
+
+`FROM` the published `ci-runner-node` digest, so it inherits the tool cache, pnpm and
+`gh`. It adds three things muxwall's `pnpm install` and `pnpm gates` need (CIIMG-8, for
+DECK-11):
+
+| Addition | Why |
+| --- | --- |
+| `make`, `g++` (`python3` is already in the base) | `node-pty` has no linux-x64 prebuild, so `pnpm install` compiles it through `node-gyp` |
+| **tmux 3.7b**, built from source | the unit suites drive a real tmux on `-L` sockets rather than a mock |
+| Playwright Chromium's **OS libraries only** | the e2e phase launches Chromium |
+| `iproute2` (for `ss`) | muxwall's tmux-socket sweep uses it to tell a live socket from a leaked one |
+| `fonts-dejavu-core` | without it fontconfig resolves `monospace` to a CJK fallback font (WenQuanYi Zen Hei Mono), which skews the glyph metrics muxwall's sizing and layout specs measure |
+| `ENV LANG=C.UTF-8` | GitHub-hosted runners set it and the official runner image does not. Without it tmux escapes muxwall's `0x1f` field separator to the literal text `\037` |
+
+**Why a separate image.** The toolchain and tmux are small, but Chromium's library set
+is ~89 packages, and no other consumer needs any of it. A separate image keeps every
+other repo's runner lean.
+
+**Why tmux is built from source, and why 3.7b.** Ubuntu noble ships tmux 3.4, and 3.4
+**crashes** on exactly the sequence muxwall runs for every session: with
+`window-size manual` set on the server, the next `new-session -d` kills the server with
+`server exited unexpectedly`. Found by running muxwall's gates inside the first build of
+this image, which used apt's 3.4: the unit phase went 149 failed / 3560 passed. It was
+bisected over muxwall's server options one at a time, and `window-size manual` was the
+only one that crashed. 3.7b is the version muxwall records as measured-good (3.5a is
+measured-bad), so the image ships that, from the release tarball, checked against its
+sha256. The final assertion `RUN` checks the exact version and replays the crashing
+sequence. **Do not switch this back to `apt-get install tmux`**, and bump `TMUX_VERSION`
+only after muxwall's gates have run green against the new version. The binary goes to
+**`/usr/bin/tmux`**, not `/usr/local/bin`: muxwall runs tmux by that absolute path, so a
+tmux anywhere else is the same as no tmux.
+
+**Why the browser is not baked.** A baked browser is tied to one `@playwright/test`
+version, so every Playwright bump in muxwall would need a rebuild here, a publish and a
+digest bump before its CI went green. The image carries only the libraries, installed by
+`playwright install-deps chromium` at muxwall's pinned version. muxwall's workflow
+downloads the browser itself with `pnpm exec playwright install chromium`, into an
+`actions/cache` keyed on the Playwright version. The libraries are installed by
+Playwright rather than as a hand-pinned apt list. The Containerfile header gives the
+reasoning: the package *list* is pinned by `PLAYWRIGHT_VERSION`, and the published digest
+freezes the package versions.
+
+**pnpm.** The inherited pnpm is 10.34.5. muxwall pins `pnpm@11.21.0`, and a plain `pnpm`
+switches itself to that version from the `packageManager` field (measured: `pnpm --version`
+inside the clone reports 11.21.0). muxwall's `require-pnpm.sh` refuses a major mismatch,
+so a workflow that sets `npm_config_manage_package_manager_versions=false` must install
+11.x itself. `pnpm/action-setup` does that.
+
+**Runner label: `muxwall`.** Proposed as `self-hosted,linux,x64,muxwall`, so muxwall's
+workflow asks with `runs-on: [self-hosted, muxwall]`. This follows the pattern the
+`docker` slots use: a distinct label for slots that differ from the default. Today the
+ANS runner role has one image for every slot, so these slots also need the role to
+support a per-repo image. That, and the digest pin, are operator work in the ansible
+repo, not part of a change here.
+
+**How it was verified.** Before the first publish, muxwall's `pnpm install` and full
+`pnpm gates` were run in a fresh clone inside the locally built image, as uid 1001.
+`node-pty` compiled to `build/Release/pty.node` and spawned a pty. Typecheck, biome,
+build and all 3,709 unit cases were green. Each addition in the table above came out of
+a red run of that probe, not from reading. The e2e cases still red in this image fail on
+muxwall's own assumptions about the host, not on anything the image lacks:
+
+- a `claude` binary on `PATH`. The spec says it fails rather than skips on purpose, and
+  with a stub `claude` on `PATH` both affected cases passed;
+- a docker daemon, for the `container` Playwright project;
+- a readable quota source for the quota-panel case;
+- pixel-exact layout assertions calibrated to the dev host's fonts (Noto Sans / Noto Sans
+  Mono). Under DejaVu one hover spec's hard-coded 14 px row misses, and one top-bar case
+  spills 2 px at 768 px. Installing Noto instead did not fix this; it moved the failures
+  to other cases. So these specs need a tolerance, or a row height they measure, rather
+  than a font chosen to match one machine.
+
+Those are for muxwall's workflow and specs to settle (DECK-11). The PR for CIIMG-8 has
+the logs.
 
 ## Adding an image
 

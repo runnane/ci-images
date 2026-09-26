@@ -10,6 +10,7 @@ updates:
     directories:
       - /images/ci-runner-base
       - /images/ci-runner-node
+      - /images/ci-runner-muxwall
     schedule:
       interval: weekly
     commit-message:
