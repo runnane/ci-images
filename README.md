@@ -19,11 +19,12 @@ control node run byte-identical versions. Baking `ansible-lint` or `uv` here wou
 duplicate or fight that. `gitleaks/gitleaks-action@v2` is a JS action (`using: node24`),
 not a Docker one, so it needs no daemon inside the runner.
 
-Current digests to pin:
+Current digests to pin (read from the `9f3e1cb` publish run's summary — see below for
+why the node line will already be stale by the time this PR merges):
 
 ```
-ghcr.io/runnane/ci-runner-base@sha256:abdd829b97ccddf5fd24f1b7c2b404247c8fc6644e818797b2268123aa78c3c5
-ghcr.io/runnane/ci-runner-node@sha256:bf5a1ac62bdb68dd1fe5ad3aab8cc0887288ad25595a01cbc9448d8b311fd0fd
+ghcr.io/runnane/ci-runner-base@sha256:a02422c715e14e38cacab123a4f03165af46d098851447f791e0604f63f93b00
+ghcr.io/runnane/ci-runner-node@sha256:1a9726d25128c24e1b3406e44e868457f951edd17ec36363cc051d0b40741d23
 ```
 
 ## Why this repo is public, and must stay that way
@@ -68,6 +69,14 @@ reproduced *after a converge that reported `changed`*. Ignore anything whose onl
 matches `sha256-*`, and verify by pulling the candidate before you pin it.
 
 Images are anonymously pullable; no registry credential is needed on the runner host.
+
+**A base-image change reaches `ci-runner-node` as two publishes, not one.** `main`
+publishes each image independently, so bumping `ci-runner-base`'s digest does not by
+itself rebuild `ci-runner-node` — its `FROM` is a separate pin that has to move too.
+Dependabot now watches both `/images/ci-runner-base` and `/images/ci-runner-node`, so
+the second bump normally arrives as its own PR shortly after the first merges; a human
+can also make it by hand. `.agents/gates.md` calls this the base-then-bump sequence —
+see it for how to build both together locally before either publishes.
 
 ## What the official base already gives you
 

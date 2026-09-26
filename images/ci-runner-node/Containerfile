@@ -20,7 +20,7 @@
 #   26 -> the VTK site (engines: >=26)
 # Adding a version here means a consumer asked for it. Don't add speculatively; each one
 # is ~100 MB.
-FROM ghcr.io/runnane/ci-runner-base@sha256:abdd829b97ccddf5fd24f1b7c2b404247c8fc6644e818797b2268123aa78c3c5
+FROM ghcr.io/runnane/ci-runner-base@sha256:a02422c715e14e38cacab123a4f03165af46d098851447f791e0604f63f93b00
 
 ARG NODE_20=20.20.2
 ARG NODE_22=22.23.2
