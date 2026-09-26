@@ -34,6 +34,7 @@ jobs:
         image:
           - ci-runner-base
           - ci-runner-node
+          - ci-runner-muxwall
     permissions:
       contents: read
       packages: write # push to GHCR

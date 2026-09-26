@@ -1,0 +1,200 @@
+# syntax=docker/dockerfile:1
+#
+# ci-runner-node plus what muxwall's `pnpm install` and `pnpm gates` need on top of it
+# (CIIMG-8, for DECK-11). Three things, each measured in muxwall rather than guessed:
+#
+#   1. A native toolchain (make, g++; python3 is already in the base). node-pty ships
+#      prebuilds for darwin and win32 only — none for linux-x64 — so `pnpm install`
+#      falls back to `node-gyp rebuild`, which needs all three.
+#   2. tmux, BUILT FROM SOURCE at 3.7b. See the builder stage for why not Ubuntu's.
+#   3. Playwright Chromium's SYSTEM LIBRARIES — deliberately not the browser.
+#   4. Two smaller environment gaps the first full run of muxwall's gates in this image
+#      found: `ss` (iproute2), which its tmux-socket sweep uses to tell a live socket
+#      from a leaked one, and a UTF-8 LANG — see the ENV line below.
+#
+# WHY A SEPARATE IMAGE, NOT MORE LAYERS ON ci-runner-node
+#
+# The toolchain and tmux are small, but Chromium's library set is not, and no other
+# consumer of ci-runner-node needs any of it. A separate image keeps every other repo's
+# runner lean; the cost is one more matrix row and one more digest to pin.
+#
+# WHY ONLY THE OS DEPENDENCIES, NOT THE BROWSER
+#
+# A baked browser is tied to one @playwright/test version: every Playwright bump in
+# muxwall would need a rebuild here, a publish, and a digest bump in the runner role
+# before its CI could go green again. The libraries change far less often than the
+# browser build, so the image carries them and the workflow downloads the browser
+# itself (`pnpm exec playwright install chromium`) into an actions/cache keyed on the
+# Playwright version.
+#
+# WHY THE CHROMIUM LIBRARIES ARE INSTALLED BY PLAYWRIGHT RATHER THAN AS A PINNED LIST
+#
+# `playwright install-deps chromium` at an exact Playwright version is the package LIST
+# that version was tested against — the list is pinned by PLAYWRIGHT_VERSION. The
+# package VERSIONS are whatever noble-updates carries at build time, and are frozen by
+# the published digest, which is what consumers pin. Hand-pinning each of the ~27
+# top-level packages with an exact version (as libatomic1 is in ci-runner-node) would
+# add ~27 pins that expire every time Ubuntu ships a security update to any of them —
+# libnss3, libcups2t64, libglib2.0-0t64 and the X libraries among them — turning the
+# weekly rebuild, whose job is to pick those updates up, into a weekly failure. The
+# transitive dependencies (89 packages in all) would stay unpinned anyway, so the
+# hand-pinned list would buy the appearance of determinism rather than the fact.
+# The toolchain and tmux, where the version is what a consumer depends on, ARE pinned.
+
+# Declared before the first FROM so both stages share one value: the builder compiles it
+# and the final stage's assertion checks for it.
+ARG TMUX_VERSION=3.7b
+
+# ---------------------------------------------------------------------------------------
+# Builder: tmux from a checksummed release tarball.
+#
+# WHY NOT UBUNTU'S tmux. Noble ships 3.4 (3.4-1ubuntu0.1), and 3.4 CRASHES on exactly the
+# sequence muxwall runs for every session it creates: with `window-size manual` set on
+# the server, the next `new-session -d` kills the server ("server exited unexpectedly").
+# Measured in this image while building it — bisected over muxwall's SERVER_OPTIONS
+# one option at a time, and window-size manual was the only one that crashed. With 3.4,
+# muxwall's unit suite went 149 failed / 3560 passed. 3.7b is the version muxwall's own
+# docs record as measured-good (MEASURED_GOOD_TMUX_VERSIONS in its tmux.ts, beside
+# KNOWN_BAD_TMUX_VERSIONS = 3.5a), and the one its maintainers run. So the version is a
+# consumer requirement, not a preference — do not "simplify" this back to apt.
+# ---------------------------------------------------------------------------------------
+FROM ghcr.io/runnane/ci-runner-node@sha256:1a9726d25128c24e1b3406e44e868457f951edd17ec36363cc051d0b40741d23 AS tmux-build
+
+ARG TMUX_VERSION
+# sha256 of tmux-${TMUX_VERSION}.tar.gz, from the GitHub release asset's own digest
+# (`gh api repos/tmux/tmux/releases/tags/3.7b`), which matched a local download.
+ARG TMUX_SHA256=87f2e99e3b685973f2ca002ffd6ed7e51a5744f7009daae5a15670b6d532db96
+# Exact noble versions, resolved inside the pinned parent on 2026-09-26.
+ARG LIBEVENT_DEV_VERSION=2.1.12-stable-9ubuntu2.1
+ARG LIBNCURSES_DEV_VERSION=6.4+20240113-1ubuntu2.2
+ARG PKG_CONFIG_VERSION=1.8.1-2build1
+ARG GCC_VERSION=4:13.2.0-7ubuntu1
+ARG MAKE_VERSION=4.3-4.1build2
+# configure refuses without a yacc, even from a release tarball.
+ARG BISON_VERSION=2:3.8.2+dfsg-1ubuntu0.24.04.1
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+USER root
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends \
+      "libevent-dev=${LIBEVENT_DEV_VERSION}" \
+      "libncurses-dev=${LIBNCURSES_DEV_VERSION}" \
+      "pkg-config=${PKG_CONFIG_VERSION}" \
+      "gcc=${GCC_VERSION}" \
+      "make=${MAKE_VERSION}" \
+      "bison=${BISON_VERSION}"; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN set -eux; \
+    curl --fail --silent --show-error --location --output tmux.tar.gz \
+      "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"; \
+    echo "${TMUX_SHA256}  tmux.tar.gz" | sha256sum --check --strict; \
+    tar --extract --gzip --strip-components=1 --file tmux.tar.gz; \
+    ./configure --prefix=/usr/local; \
+    make -j"$(nproc)"; \
+    make install; \
+    /usr/local/bin/tmux -V
+
+# Nothing runs in this stage after the build; this only keeps hadolint's DL3002 (last USER
+# must not be root) honest per stage rather than suppressed.
+USER runner
+
+# ---------------------------------------------------------------------------------------
+# The image itself.
+# ---------------------------------------------------------------------------------------
+FROM ghcr.io/runnane/ci-runner-node@sha256:1a9726d25128c24e1b3406e44e868457f951edd17ec36363cc051d0b40741d23
+
+# Exact noble versions, resolved inside the pinned parent on 2026-09-26 with
+# `apt-cache policy <pkg>`. When a build fails with "Version '…' was not found", the
+# package moved in noble-updates: bump the ARG to what `apt-cache policy` shows now.
+ARG MAKE_VERSION=4.3-4.1build2
+ARG GXX_VERSION=4:13.2.0-7ubuntu1
+# tmux's one runtime library the parent lacks (libtinfo6 and libc are already there).
+ARG LIBEVENT_CORE_VERSION=2.1.12-stable-9ubuntu2.1
+# For `ss`. Without it muxwall's socket sweep reports liveness as unknown and three of
+# its unit cases fail on their stated precondition.
+ARG IPROUTE2_VERSION=6.1.0-1ubuntu6.4
+# A real default monospace and sans font. Playwright's install-deps brings only fallback
+# fonts, and without this fontconfig resolves `monospace` to WenQuanYi Zen Hei Mono, a
+# CJK font, which skews the glyph metrics muxwall's sizing and layout specs measure.
+# DejaVu is Ubuntu's own default, and what GitHub-hosted runners resolve to.
+ARG FONTS_DEJAVU_CORE_VERSION=2.37-8
+# muxwall's resolved @playwright/test (pnpm-lock.yaml). Only the dependency LIST depends
+# on this; a muxwall bump needs no rebuild unless the new version adds a library.
+ARG PLAYWRIGHT_VERSION=1.62.1
+ARG TMUX_VERSION
+
+# Repeated rather than inherited: the parent is pinned by digest and may predate its
+# own SHELL line. See ci-runner-base.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+USER root
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends \
+      "make=${MAKE_VERSION}" \
+      "g++=${GXX_VERSION}" \
+      "libevent-core-2.1-7t64=${LIBEVENT_CORE_VERSION}" \
+      "iproute2=${IPROUTE2_VERSION}" \
+      "fonts-dejavu-core=${FONTS_DEJAVU_CORE_VERSION}"; \
+    rm -rf /var/lib/apt/lists/*
+
+# To /usr/bin/tmux, NOT /usr/local/bin: muxwall execFiles the ABSOLUTE path
+# (TMUX_BIN = '/usr/bin/tmux' in its tmux.ts, deliberately, so a shell alias or PATH
+# cannot substitute another binary). Installed under /usr/local, every tmux call failed
+# with ENOENT and the unit phase went red again. Nothing else in this image owns that
+# path — Ubuntu's tmux package is not installed.
+COPY --from=tmux-build /usr/local/bin/tmux /usr/bin/tmux
+
+# install-deps runs its own apt-get update + install. Its npm/npx cache is root's and
+# is dropped in the same layer, so nothing but the libraries survives.
+RUN set -eux; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium; \
+    rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache /tmp/*
+
+# A UTF-8 locale for every job, as GitHub-hosted ubuntu runners have (LANG=C.UTF-8);
+# the official runner image leaves LANG unset. Without it tmux escapes muxwall's 0x1f
+# field separator to the literal text `\037` (its DECK-225), so a test that reads
+# list-windows directly parses NaN, and bash's printf cannot emit `\u2500`. Measured:
+# with LANG unset, 3 of muxwall's unit cases failed on exactly these. C.UTF-8 ships
+# with the base (`locale -a`), so this needs no package.
+ENV LANG=C.UTF-8
+
+# Back to the account jobs run as, exactly as the parent ends (uid 1001).
+USER runner
+
+# Fail the build here rather than in muxwall's CI. The toolchain node-gyp needs; tmux AT
+# THE VERSION muxwall needs, and actually surviving the sequence 3.4 crashed on; and a
+# handful of the libraries Chromium dies without — libnss3, libgbm1 and libxkbcommon0 are
+# the ones whose absence shows up first as "error while loading shared libraries" at
+# browser launch.
+#
+# The linker cache is read once into a variable rather than piped to `grep -q` per
+# library: under pipefail, grep -q exiting on the first match can SIGPIPE ldconfig and
+# fail the build for a library that is present.
+RUN set -eux; \
+    test -x /usr/bin/tmux; \
+    for tool in python3 make g++ tmux ss; do \
+      command -v "$tool" >/dev/null || { echo "MISSING: $tool" >&2; exit 1; }; \
+    done; \
+    python3 --version; \
+    make --version; \
+    g++ --version; \
+    test "$(tmux -V)" = "tmux ${TMUX_VERSION}" || { echo "WRONG TMUX: $(tmux -V)" >&2; exit 1; }; \
+    tmux -L build-probe new-session -d -s hold 'sleep 60'; \
+    tmux -L build-probe set-option -g window-size manual; \
+    tmux -L build-probe new-session -d -s real 'sleep 60'; \
+    tmux -L build-probe kill-server; \
+    rm -rf "/tmp/tmux-$(id -u)"; \
+    test "$(printf '\u2500')" = "─" || { echo "LOCALE: printf cannot emit UTF-8 under LANG=${LANG:-unset}" >&2; exit 1; }; \
+    linker_cache="$(ldconfig -p)"; \
+    for lib in libnss3.so libgbm.so.1 libxkbcommon.so.0 libasound.so.2 libatk-bridge-2.0.so.0 libcups.so.2; do \
+      grep -qF "$lib" <<<"$linker_cache" || { echo "MISSING: $lib" >&2; exit 1; }; \
+    done; \
+    node --version; \
+    pnpm --version
