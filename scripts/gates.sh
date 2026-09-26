@@ -51,7 +51,7 @@ docker run --rm -i ghcr.io/jqlang/jq:1.7.1 -e '
     elif (["public","private"] | index($m.visibility)) == null then error("visibility")
     elif (["changesets","release-it","release-please","np","none"] | index($m.release)) == null then error("release")
     elif (["self-hosted","github-hosted","dispatch-only","none"] | index($m.ci)) == null then error("ci")
-    elif (["none","fleet","printer","shell","rsync-deploy","worker-deploy","hosted-service"] | index($m.liveBoundary)) == null then error("liveBoundary")
+    elif (["none","fleet","printer","shell","rsync-deploy","worker-deploy","hosted-service","registry-publish"] | index($m.liveBoundary)) == null then error("liveBoundary")
     elif (.worktreeSafe | type) != "boolean" then error("worktreeSafe must be a boolean")
     else "manifest ok" end
 ' < .agents/repo.json

@@ -61,7 +61,7 @@ automatically, so adding an image needs no edit here.
   and runs the layer secret scan only on `main`. A green PR check therefore says
   nothing about the push path.
 
-## Why `liveBoundary` is `rsync-deploy`
+## Why `liveBoundary` is `registry-publish`
 
 **Merging to `main` publishes.** `build.yml` pushes every image to public GHCR,
 tagged `main` and `sha-<commit>`. Those layers are world-readable and effectively
@@ -69,10 +69,15 @@ permanent, so a credential that reaches one is leaked for good.
 
 The fleet only picks up a new image when someone bumps the digest in the
 ansible runner role, which is a reviewed change in another repo. So the reach of
-a merge here is a public publish, not the running runners.
+a merge here is a public publish, not the running runners, and `fleet` would
+overstate it.
 
-The schema has no member for publishing to a registry, and `none` is the
-dangerous way to be wrong: an agent reading `none` concludes a merge is
-harmless. `rsync-deploy` names the wrong mechanism, deploy-by-copy, but the
-right reach: a merge makes something live and public. That is the direction
-constitution §7 says to err in. RCP-1291 asks for a proper member.
+`registry-publish` (added by RCP-1291) names exactly that: a merge publishes a
+public, effectively permanent artifact to a registry. Until it existed this repo
+recorded `rsync-deploy`, the wrong mechanism but the right reach, because `none`
+is the dangerous way to be wrong (constitution §7).
+
+The jq check in `scripts/gates.sh` carries its own copy of the schema's enums.
+When the schema gains a member, add it there before using it here, and only once
+the respawn-control build that has it is deployed: the registry parses this
+manifest strictly, so an unknown value takes the whole manifest to null.
