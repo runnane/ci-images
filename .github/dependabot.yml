@@ -7,6 +7,9 @@ updates:
   - package-ecosystem: docker
     directories:
       - /images/ci-runner-base
+      # Its FROM pins the published ci-runner-node by digest; without this entry a node
+      # publish never reaches it (the same gap CIIMG-12 closes for node's own FROM).
+      - /images/ci-runner-muxwall
     schedule:
       interval: weekly
     commit-message:
