@@ -59,9 +59,7 @@ docker run --rm -i ghcr.io/jqlang/jq:1.7.1 -e '
 step "hadolint (${IMAGES[*]})"
 for image in "${IMAGES[@]}"; do
   echo "-- images/$image/Containerfile"
-  # `error`, not `warning`, only until CIIMG-10 fixes the three standing
-  # warnings (two DL4006, one DL3008). They still print on every run.
-  docker run --rm -i "$HADOLINT" hadolint --failure-threshold error - < "images/$image/Containerfile"
+  docker run --rm -i "$HADOLINT" hadolint --failure-threshold warning - < "images/$image/Containerfile"
 done
 
 step "actionlint (.github/workflows)"

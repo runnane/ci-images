@@ -27,11 +27,16 @@ automatically, so adding an image needs no edit here.
 
 ## Traps
 
-- **hadolint fails only on `error` for now.** The Containerfiles carry three
-  standing warnings, printed on every run: DL4006 in both images and DL3008 on
-  `libatomic1`. Fixing them changes the published images, so CIIMG-10 tracks
-  that and will then raise the threshold to `warning`. A *new* warning in your
-  diff is still yours to fix. Read the hadolint output rather than the exit code.
+- **hadolint fails on `warning`.** Two consequences:
+  - Every `apt-get install` needs an exact version.
+  - Every `RUN` with a pipe relies on the `SHELL ["/bin/bash", "-o", "pipefail", "-c"]`
+    line near the top of each Containerfile. Keep that line in any new image.
+- **An exact apt pin expires.** Ubuntu keeps only the newest version in
+  `noble-updates`, so a pinned version such as `LIBATOMIC1_VERSION` stops
+  installing once it is superseded. When a build fails with `Version '…' for
+  'libatomic1' was not found`, the upstream package moved. Bump the `ARG` to
+  whatever `apt-cache policy libatomic1` shows inside the base image. Nothing is
+  broken beyond that. The weekly scheduled build is usually where this surfaces.
 
 - **The manifest check is structural, not the canonical validator.** The source
   of truth is the zod schema in respawn-control, `src/shared/repo-manifest.ts`.

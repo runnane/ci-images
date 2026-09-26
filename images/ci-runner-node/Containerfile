@@ -32,6 +32,14 @@ ARG NODE_DEFAULT=26.6.0
 # makes the common case offline — corepack still honours each repo's `packageManager`
 # field, including ansible's pnpm 9, fetching that version if it differs.
 ARG PNPM_VERSION=10.34.5
+# Exact noble-updates version, resolved inside the pinned base on 2026-09-26. Ubuntu
+# drops a superseded version from noble-updates, so when this fails to install, the
+# weekly rebuild is telling you to bump it: `apt-cache policy libatomic1` in the base.
+ARG LIBATOMIC1_VERSION=14.2.0-4ubuntu2~24.04.1
+
+# Repeated rather than inherited: this FROM pins a published base digest, which may
+# predate the base's own SHELL line. See the base Containerfile for why.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
@@ -44,7 +52,7 @@ USER root
 # Node would be unusable while 20 and 22 looked fine.
 RUN set -eux; \
     apt-get update; \
-    apt-get install --yes --no-install-recommends libatomic1; \
+    apt-get install --yes --no-install-recommends "libatomic1=${LIBATOMIC1_VERSION}"; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
