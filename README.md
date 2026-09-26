@@ -19,8 +19,9 @@ control node run byte-identical versions. Baking `ansible-lint` or `uv` here wou
 duplicate or fight that. `gitleaks/gitleaks-action@v2` is a JS action (`using: node24`),
 not a Docker one, so it needs no daemon inside the runner.
 
-Current digests to pin (read from the `9f3e1cb` publish run's summary — see below for
-why the node line will already be stale by the time this PR merges):
+Digests as of the `9f3e1cb` publish, read from its run summary. The node line predates
+the node image's move onto this base (CIIMG-12), so the next publish supersedes it —
+always take the digest to pin from the latest run summary, as described below:
 
 ```
 ghcr.io/runnane/ci-runner-base@sha256:a02422c715e14e38cacab123a4f03165af46d098851447f791e0604f63f93b00
