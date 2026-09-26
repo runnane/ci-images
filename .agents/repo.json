@@ -9,7 +9,7 @@
   },
   "release": "none",
   "ci": "github-hosted",
-  "liveBoundary": "rsync-deploy",
+  "liveBoundary": "registry-publish",
   "worktreeSafe": true,
   "gatesDoc": ".agents/gates.md",
   "userspaceBundle": "github:runnane/agent-userspace"
