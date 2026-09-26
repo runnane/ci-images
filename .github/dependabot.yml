@@ -1,14 +1,15 @@
 version: 2
 
 # Free on a public repo, and the point of this repo is that pinned things stay reviewed
-# rather than stale. Both ecosystems matter: the Containerfile pins the runner base by
-# digest, and the workflow pins each action.
+# rather than stale. Both ecosystems matter: every Containerfile pins its FROM by digest
+# (ci-runner-node pins the published ci-runner-base, not a local build — see
+# .agents/gates.md), and the workflow pins each action. Watch every image directory here,
+# not just the base, or a base digest bump never reaches the images built on top of it.
 updates:
   - package-ecosystem: docker
     directories:
       - /images/ci-runner-base
-      # Its FROM pins the published ci-runner-node by digest; without this entry a node
-      # publish never reaches it (the same gap CIIMG-12 closes for node's own FROM).
+      - /images/ci-runner-node
       - /images/ci-runner-muxwall
     schedule:
       interval: weekly
