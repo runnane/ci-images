@@ -8,7 +8,7 @@ Published to public GHCR:
 | Image | Contents | Issue |
 | --- | --- | --- |
 | `ghcr.io/runnane/ci-runner-base` | official runner + `gh` | CIIMG-1 |
-| `ghcr.io/runnane/ci-runner-node` | base + Node 20/22/26 in the tool cache + pnpm | CIIMG-2 |
+| `ghcr.io/runnane/ci-runner-node` | base + Node 20/22/26 in the tool cache + pnpm + zsh | CIIMG-2, CIIMG-15 |
 | `ghcr.io/runnane/ci-runner-muxwall` | node + C++ toolchain, tmux 3.7b (from source), Playwright Chromium's OS libraries | CIIMG-8 |
 
 **`ci-runner-node` is the one the runners should use** — it inherits the base, and it
@@ -143,6 +143,10 @@ per-major image variants.
 pnpm 10.34.5 is installed globally (spond-js's pin). Repos pinning something else — VTK's
 10.33.3, ansible's 9 — still resolve their own via `packageManager` or
 `pnpm/action-setup`; the baked copy just makes the common case need no network.
+
+`zsh` (binary only, no recommends) is there for the ansible repo's pytest job, whose
+`.zshrc` tests run a real `zsh -f` (CIIMG-15). A job cannot `apt-get install` it itself:
+runner slots run with `no-new-privileges`, so `sudo` refuses, and that hardening stays.
 
 ### Two traps found while building it
 
