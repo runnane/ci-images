@@ -92,6 +92,9 @@ for image in "${IMAGES[@]}"; do
     -f "images/$image/Containerfile" \
     -t "ci-images/$image:$RUN_ID" \
     "images/$image"
+
+  step "layer secret scan images/$image"
+  scripts/scan-layer-history.sh "ci-images/$image:$RUN_ID"
 done
 
 printf '\n\033[1;32mgates green\033[0m\n'
