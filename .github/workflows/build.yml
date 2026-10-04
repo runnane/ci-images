@@ -74,6 +74,9 @@ jobs:
           context: images/${{ matrix.image }}
           file: images/${{ matrix.image }}/Containerfile
           push: ${{ github.event_name != 'pull_request' }}
+          # Also load into the runner's daemon: the layer scan below reads the local
+          # image, and a push-only build leaves nothing local to read (CIIMG-14).
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Attested separately below, so buildkit's inline provenance is redundant.
@@ -90,19 +93,11 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      # Nothing secret belongs in a world-readable, effectively permanent layer. This is
-      # a cheap backstop, not a substitute for not doing it in the first place.
+      # Runs on every event, pull requests included, so a PR proves the scan can read
+      # the image. Scans the LOADED image by id; scripts/scan-layer-history.sh fails
+      # on a missing image or an empty history rather than passing on no input.
       - name: Fail if a layer looks like it carries a secret
-        if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          if docker history --no-trunc --format '{{.CreatedBy}}' \
-               "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}" \
-             | grep -inE '(ghp_|github_pat_|-----BEGIN [A-Z ]*PRIVATE KEY)'; then
-            echo "::error::a build layer appears to contain a credential"
-            exit 1
-          fi
-          echo "no credential pattern found in layer history"
+        run: scripts/scan-layer-history.sh "${{ steps.build.outputs.imageid }}"
 
       - name: Report the digest to pin
         if: github.event_name != 'pull_request'

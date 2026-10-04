@@ -63,9 +63,14 @@ automatically, so adding an image needs no edit here.
   deletes it on exit. Two worktrees gating at once would otherwise test each
   other's image.
 - **CI is the second opinion, and it does not push on a PR.** `build.yml` builds
-  every image on `pull_request` without logging in to GHCR. It pushes, attests
-  and runs the layer secret scan only on `main`. A green PR check therefore says
-  nothing about the push path.
+  every image on `pull_request` without logging in to GHCR. It pushes and attests
+  only on `main`; the layer secret scan (`scripts/scan-layer-history.sh`, run on
+  the loaded image) runs on every event. A green PR check therefore says nothing
+  about the push path, but does cover the layer scan.
+- **The layer scan must fail on no input.** `docker history` on an image that is
+  not in the local daemon prints nothing, which an `if ... | grep` reads as
+  "clean" (CIIMG-14). The script reads the history outside any `if` and fails on
+  a missing image or an empty history. `gates.sh` runs it on each built image.
 
 ## Why `liveBoundary` is `registry-publish`
 
