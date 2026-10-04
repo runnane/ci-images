@@ -36,6 +36,10 @@ ARG PNPM_VERSION=10.34.5
 # drops a superseded version from noble-updates, so when this fails to install, the
 # weekly rebuild is telling you to bump it: `apt-cache policy libatomic1` in the base.
 ARG LIBATOMIC1_VERSION=14.2.0-4ubuntu2~24.04.1
+# From noble's release pocket, not noble-updates, resolved inside the pinned base on
+# 2026-10-04. A release-pocket version stays installable after an update supersedes it,
+# so unlike libatomic1 this pin does not expire on its own.
+ARG ZSH_PKG_VERSION=5.9-6ubuntu2
 
 # Repeated rather than inherited: this FROM pins a published base digest, which may
 # predate the base's own SHELL line. See the base Containerfile for why.
@@ -50,9 +54,16 @@ USER root
 # with "error while loading shared libraries: libatomic.so.1". Node 20 and 22 do not need
 # it. Caught by building this image before publishing it; without this the VTK site's
 # Node would be unusable while 20 and 22 looked fine.
+#
+# zsh is for runnane/ansible's pytest job, whose .zshrc tests run a real `zsh -f`. The
+# job cannot install it: runner slots set no-new-privileges, so `sudo` refuses. Only the
+# binary is needed (`zsh -f` reads no rc files), hence no recommends and no framework.
 RUN set -eux; \
     apt-get update; \
-    apt-get install --yes --no-install-recommends "libatomic1=${LIBATOMIC1_VERSION}"; \
+    apt-get install --yes --no-install-recommends \
+      "libatomic1=${LIBATOMIC1_VERSION}" \
+      "zsh=${ZSH_PKG_VERSION}" \
+      "zsh-common=${ZSH_PKG_VERSION}"; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -107,7 +118,7 @@ USER runner
 
 # Fail the build here rather than in a consumer's CI. Each assertion maps to something a
 # consumer depends on: the three cache entries plus their markers, a working default
-# node/npm/pnpm, and gh surviving from the base layer.
+# node/npm/pnpm, gh surviving from the base layer, and a zsh that runs with no rc files.
 RUN set -eux; \
     for version in "$NODE_20" "$NODE_22" "$NODE_26"; do \
       test -x "$RUNNER_TOOL_CACHE/node/${version}/x64/bin/node"; \
@@ -118,6 +129,7 @@ RUN set -eux; \
     pnpm --version; \
     gh --version; \
     git --version; \
+    zsh -f -c 'echo "zsh $ZSH_VERSION"'; \
     # The tool-cache root must be writable by this user, or any setup-* action for a
     # toolchain we did NOT pre-seed dies with EACCES creating its own subdirectory.
     # Asserted because the failure surfaces far away — in a consumer's CI, naming a
