@@ -37,6 +37,12 @@ automatically, so adding an image needs no edit here.
   'libatomic1' was not found`, the upstream package moved. Bump the `ARG` to
   whatever `apt-cache policy libatomic1` shows inside the base image. Nothing is
   broken beyond that. The weekly scheduled build is usually where this surfaces.
+- **A local green says nothing about whether an apt pin still installs.** `--pull`
+  re-resolves the `FROM`, but when that digest has not changed, the `apt-get install`
+  layer comes straight from the local build cache and never runs. CIIMG-16's
+  libevent pins expired while `scripts/gates.sh` stayed green in two worktrees, and
+  CI caught it on its cold cache minutes later. To prove that a pin installs, run
+  `docker build --no-cache` on that one image.
 
 - **The manifest check is structural, not the canonical validator.** The source
   of truth is the zod schema in respawn-control, `src/shared/repo-manifest.ts`.
