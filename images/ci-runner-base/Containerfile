@@ -7,7 +7,7 @@
 # inside our own network, so what runs must not change without a reviewed commit.
 # Digest below is ghcr.io/actions/actions-runner:latest as of 2026-08-04
 # (Ubuntu 24.04.4 LTS, linux/amd64). Dependabot moves it; nothing else should.
-FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
+FROM ghcr.io/actions/actions-runner@sha256:6d0b2d80d80f143f77dcb676e50920100bbb547e39e883454d57f45ab8c31300
 
 # bash with pipefail for every RUN below: /bin/sh here is dash, which has no
 # pipefail, so a failing left-hand side of a pipe would otherwise be masked by
